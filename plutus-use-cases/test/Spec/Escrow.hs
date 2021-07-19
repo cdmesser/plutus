@@ -81,12 +81,14 @@ w3 = Wallet 3
 escrowParams :: EscrowParams d
 escrowParams =
   EscrowParams
-    { escrowDeadline = TimeSlot.slotToEndPOSIXTime def 100
+    { escrowDeadline = startTime + 100000
     , escrowTargets  =
         [ payToPubKeyTarget (pubKeyHash $ walletPubKey w1) (Ada.lovelaceValueOf 10)
         , payToPubKeyTarget (pubKeyHash $ walletPubKey w2) (Ada.lovelaceValueOf 20)
         ]
     }
+    where
+        startTime = TimeSlot.scSlotZeroTime def
 
 -- | Wallets 1 and 2 pay into an escrow contract, wallet 3
 --   cashes out.

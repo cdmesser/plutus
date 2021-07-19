@@ -88,12 +88,12 @@ mkCampaign ddl collectionDdl ownerWallet =
 -- | The 'POSIXTimeRange' during which the funds can be collected
 collectionRange :: Campaign -> POSIXTimeRange
 collectionRange cmp =
-    Interval.interval (campaignDeadline cmp + 1) (campaignCollectionDeadline cmp)
+    Interval.interval (campaignDeadline cmp) (campaignCollectionDeadline cmp - 1)
 
 -- | The 'POSIXTimeRange' during which a refund may be claimed
 refundRange :: Campaign -> POSIXTimeRange
 refundRange cmp =
-    Interval.from (campaignCollectionDeadline cmp + 1)
+    Interval.from (campaignCollectionDeadline cmp)
 
 data Crowdfunding
 instance Scripts.ValidatorTypes Crowdfunding where
@@ -151,10 +151,12 @@ crowdfunding c = contribute c `select` scheduleCollection c
 -- | A sample campaign
 theCampaign :: Campaign
 theCampaign = Campaign
-    { campaignDeadline = TimeSlot.slotToEndPOSIXTime def 40
-    , campaignCollectionDeadline = TimeSlot.slotToEndPOSIXTime def 60
+    { campaignDeadline = startTime + 40000
+    , campaignCollectionDeadline = startTime + 60000
     , campaignOwner = pubKeyHash $ Emulator.walletPubKey (Emulator.Wallet 1)
     }
+    where
+        startTime = TimeSlot.scSlotZeroTime def
 
 -- | The "contribute" branch of the contract for a specific 'Campaign'. Exposes
 --   an endpoint that allows the user to enter their public key and the
@@ -166,7 +168,7 @@ contribute cmp = do
     contributor <- pubKeyHash <$> ownPubKey
     let inst = typedValidator cmp
         tx = Constraints.mustPayToTheScript contributor contribValue
-                <> Constraints.mustValidateIn (Ledger.interval 1 (campaignDeadline cmp))
+                <> Constraints.mustValidateIn (Interval.to (campaignDeadline cmp))
     txid <- fmap txId (submitTxConstraints inst tx)
 
     utxo <- watchAddressUntilTime (Scripts.validatorAddress inst) (campaignCollectionDeadline cmp)

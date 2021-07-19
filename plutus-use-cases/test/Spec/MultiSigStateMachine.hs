@@ -5,9 +5,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TypeApplications    #-}
+
 {-# OPTIONS_GHC -fno-strictness  #-}
 {-# OPTIONS_GHC -fno-ignore-interface-pragmas #-}
 {-# OPTIONS_GHC -fplugin-opt PlutusTx.Plugin:debug-context #-}
+
 module Spec.MultiSigStateMachine(tests, lockProposeSignPay) where
 
 import           Data.Default                          (Default (def))
@@ -75,8 +77,10 @@ payment =
     MS.Payment
         { MS.paymentAmount    = Ada.lovelaceValueOf 5
         , MS.paymentRecipient = Ledger.pubKeyHash $ EM.walletPubKey w2
-        , MS.paymentDeadline  = TimeSlot.slotToEndPOSIXTime def 20
+        , MS.paymentDeadline  = startTime + 20000
         }
+    where
+        startTime = TimeSlot.scSlotZeroTime def
 
 -- | Lock some funds in the contract, then propose the payment
 --   'payment', then call @"add-signature"@ a number of times and
@@ -102,4 +106,4 @@ lockProposeSignPay signatures rounds = do
             Trace.callEndpoint @"pay" handle1 ()
             Trace.waitNSlots 1
 
-    traverse_ (\_ -> proposeSignPay) [1..rounds]
+    traverse_ (const proposeSignPay) [1..rounds]

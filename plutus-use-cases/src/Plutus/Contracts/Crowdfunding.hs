@@ -51,11 +51,11 @@ module Plutus.Contracts.Crowdfunding (
 import           Control.Applicative      (Applicative (..))
 import           Control.Monad            (void)
 import           Data.Aeson               (FromJSON, ToJSON)
+import           Data.Default             (Default (def))
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import           GHC.Generics             (Generic)
 
-import           Data.Default             (Default (def))
 import           Ledger                   (POSIXTime, POSIXTimeRange, PubKeyHash, Validator, txId)
 import qualified Ledger
 import qualified Ledger.Ada               as Ada
@@ -124,13 +124,13 @@ mkCampaign ddl collectionDdl ownerWallet =
 {-# INLINABLE collectionRange #-}
 collectionRange :: Campaign -> POSIXTimeRange
 collectionRange cmp =
-    Interval.interval (campaignDeadline cmp + 1) (campaignCollectionDeadline cmp)
+    Interval.interval (campaignDeadline cmp) (campaignCollectionDeadline cmp - 1)
 
 -- | The 'POSIXTimeRange' during which a refund may be claimed
 {-# INLINABLE refundRange #-}
 refundRange :: Campaign -> POSIXTimeRange
 refundRange cmp =
-    Interval.from (campaignCollectionDeadline cmp + 1)
+    Interval.from (campaignCollectionDeadline cmp)
 
 data Crowdfunding
 instance Scripts.ValidatorTypes Crowdfunding where
@@ -192,10 +192,12 @@ crowdfunding c = contribute c `select` scheduleCollection c
 -- | A sample campaign
 theCampaign :: Campaign
 theCampaign = Campaign
-    { campaignDeadline = TimeSlot.slotToEndPOSIXTime def 20
-    , campaignCollectionDeadline = TimeSlot.slotToEndPOSIXTime def 30
+    { campaignDeadline = startTime + 20000
+    , campaignCollectionDeadline = startTime + 30000
     , campaignOwner = pubKeyHash $ Emulator.walletPubKey (Emulator.Wallet 1)
     }
+    where
+        startTime = TimeSlot.scSlotZeroTime def
 
 -- | The "contribute" branch of the contract for a specific 'Campaign'. Exposes
 --   an endpoint that allows the user to enter their public key and the
@@ -208,7 +210,7 @@ contribute cmp = do
     contributor <- ownPubKey
     let inst = typedValidator cmp
         tx = Constraints.mustPayToTheScript (pubKeyHash contributor) contribValue
-                <> Constraints.mustValidateIn (Ledger.interval 1 (campaignDeadline cmp))
+                <> Constraints.mustValidateIn (Interval.to (campaignDeadline cmp))
     txid <- fmap txId (submitTxConstraints inst tx)
 
     utxo <- watchAddressUntilTime (Scripts.validatorAddress inst) $ campaignCollectionDeadline cmp

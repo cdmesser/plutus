@@ -1,10 +1,10 @@
-{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE TypeApplications   #-}
 {-# LANGUAGE TypeFamilies       #-}
+
 module Main(main) where
 
 import qualified Cardano.Api                    as C
@@ -116,8 +116,8 @@ writeScripts :: ScriptsConfig -> IO ()
 writeScripts config = do
     putStrLn $ "Writing " <> writeWhat (scCommand config) <> " to: " <> scPath config
     traverse_ (uncurry3 (writeScriptsTo config))
-        [ ("auction_1", Auction.auctionTrace1, Auction.auctionEmulatorCfg)
-        , ("auction_2", Auction.auctionTrace2, Auction.auctionEmulatorCfg)
+        [ ("auction_1", Auction.auctionTrace1 def, Auction.auctionEmulatorCfg)
+        , ("auction_2", Auction.auctionTrace2 def, Auction.auctionEmulatorCfg)
         , ("crowdfunding-success", Crowdfunding.successfulCampaign, def)
         , ("currency", Currency.currencyTrace, def)
         , ("escrow-redeem_1", Escrow.redeemTrace, def)
@@ -156,7 +156,7 @@ writeScriptsTo ScriptsConfig{scPath, scCommand} prefix trace emulatorCfg = do
             S.fst'
             $ run
             $ foldEmulatorStreamM (L.generalize theFold)
-            $ Trace.runEmulatorStream emulatorCfg def trace
+            $ Trace.runEmulatorStream emulatorCfg trace
 
     createDirectoryIfMissing True scPath
     case scCommand of

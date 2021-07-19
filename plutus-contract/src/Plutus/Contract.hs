@@ -100,7 +100,7 @@ import qualified Wallet.Types
 both :: Contract w s e a -> Contract w s e b -> Contract w s e (a, b)
 both a b =
   let swap (b_, a_) = (a_, b_) in
-  ((,) <$> a <*> b) `select` (fmap swap ((,) <$> b <*> a))
+  ((,) <$> a <*> b) `select` fmap swap ((,) <$> b <*> a)
 
 -- | Log a message at the 'Debug' level
 logDebug :: ToJSON a => a -> Contract w s e ()

@@ -86,7 +86,6 @@ tests = testGroup "simple-escrow"
           void $ Trace.callEndpoint @"redeem" hdl2 params
     ]
 
-
 token1 :: Integer -> Value
 token1 = Value.singleton "1111" "Token1"
 
@@ -95,8 +94,8 @@ token2 = Value.singleton "2222" "Token2"
 
 options :: CheckOptions
 options =
-    let initialDistribution = defaultDist & over (at w1 . _Just) ((<>) (token1 500))
-                                          & over (at w2 . _Just) ((<>) (token2 500))
+    let initialDistribution = defaultDist & over (ix w1) ((<>) (token1 500))
+                                          & over (ix w2) ((<>) (token2 500))
     in defaultCheckOptions & emulatorConfig . Trace.initialChainState .~ Left initialDistribution
 
 mkEscrowParams :: Value -> Value -> EscrowParams
@@ -105,8 +104,10 @@ mkEscrowParams p e =
     { payee     = pubKeyHash $ walletPubKey w1
     , paying    = p
     , expecting = e
-    , deadline  = TimeSlot.slotToEndPOSIXTime def 100
+    , deadline  = startTime + 100000
     }
+    where
+        startTime = TimeSlot.scSlotZeroTime def
 
 w1, w2 :: Wallet
 w1 = Wallet 1

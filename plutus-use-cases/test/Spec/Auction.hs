@@ -23,7 +23,7 @@ import           Control.Monad.Freer.Extras.Log     (LogLevel (..))
 import           Data.Default                       (Default (def))
 import           Data.Monoid                        (Last (..))
 
-import           Ledger                             (Ada, Slot (..), Value, pubKeyHash)
+import           Ledger                             (Ada, POSIXTime, Slot (..), Value, pubKeyHash)
 import qualified Ledger.Ada                         as Ada
 import           Plutus.Contract                    hiding (currentSlot)
 import           Plutus.Contract.Test               hiding (not)
@@ -31,6 +31,7 @@ import qualified Streaming.Prelude                  as S
 import qualified Wallet.Emulator.Folds              as Folds
 import qualified Wallet.Emulator.Stream             as Stream
 
+import           Ledger.TimeSlot                    (SlotConfig)
 import qualified Ledger.TimeSlot                    as TimeSlot
 import qualified Ledger.Value                       as Value
 import           Plutus.Contract.Test.ContractModel
@@ -42,12 +43,12 @@ import           Test.QuickCheck                    hiding ((.&&.))
 import           Test.Tasty
 import           Test.Tasty.QuickCheck              (testProperty)
 
-params :: AuctionParams
-params =
+params :: POSIXTime -> AuctionParams
+params startTime =
     AuctionParams
         { apOwner   = pubKeyHash $ walletPubKey w1
         , apAsset   = theToken
-        , apEndTime = TimeSlot.slotToEndPOSIXTime def 100
+        , apEndTime = startTime + 100000
         }
 
 -- | The token that we are auctioning off.
@@ -68,11 +69,15 @@ auctionEmulatorCfg =
 options :: CheckOptions
 options = set emulatorConfig auctionEmulatorCfg defaultCheckOptions
 
-seller :: Contract AuctionOutput SellerSchema AuctionError ()
-seller = auctionSeller (apAsset params) (apEndTime params)
+seller :: SlotConfig -> Contract AuctionOutput SellerSchema AuctionError ()
+seller slotCfg = do
+    let startTime = TimeSlot.scSlotZeroTime slotCfg
+    auctionSeller (apAsset $ params startTime) (apEndTime $ params startTime)
 
-buyer :: ThreadToken -> Contract AuctionOutput BuyerSchema AuctionError ()
-buyer cur = auctionBuyer cur params
+buyer :: SlotConfig -> ThreadToken -> Contract AuctionOutput BuyerSchema AuctionError ()
+buyer slotCfg cur = do
+    let startTime = TimeSlot.scSlotZeroTime slotCfg
+    auctionBuyer slotCfg cur $ params startTime
 
 w1, w2, w3 :: Wallet
 w1 = Wallet 1
@@ -82,15 +87,15 @@ w3 = Wallet 3
 trace1WinningBid :: Ada
 trace1WinningBid = 50
 
-auctionTrace1 :: Trace.EmulatorTrace ()
-auctionTrace1 = do
-    sellerHdl <- Trace.activateContractWallet w1 seller
+auctionTrace1 :: SlotConfig -> Trace.EmulatorTrace ()
+auctionTrace1 slotCfg = do
+    sellerHdl <- Trace.activateContractWallet w1 (seller slotCfg)
     _ <- Trace.waitNSlots 3
     currency <- extractAssetClass sellerHdl
-    hdl2 <- Trace.activateContractWallet w2 (buyer currency)
+    hdl2 <- Trace.activateContractWallet w2 (buyer slotCfg currency)
     _ <- Trace.waitNSlots 1
     Trace.callEndpoint @"bid" hdl2 trace1WinningBid
-    void $ Trace.waitUntilTime $ apEndTime params
+    void $ Trace.waitUntilTime $ apEndTime $ params $ TimeSlot.scSlotZeroTime def
     void $ Trace.waitNSlots 2
 
 
@@ -104,20 +109,20 @@ extractAssetClass handle = do
         Last (Just currency) -> pure currency
         _                    -> Trace.throwError (Trace.GenericError "currency not found")
 
-auctionTrace2 :: Trace.EmulatorTrace ()
-auctionTrace2 = do
-    sellerHdl <- Trace.activateContractWallet w1 seller
+auctionTrace2 :: SlotConfig -> Trace.EmulatorTrace ()
+auctionTrace2 slotCfg = do
+    sellerHdl <- Trace.activateContractWallet w1 (seller slotCfg)
     _ <- Trace.waitNSlots 3
     currency <- extractAssetClass sellerHdl
-    hdl2 <- Trace.activateContractWallet w2 (buyer currency)
-    hdl3 <- Trace.activateContractWallet w3 (buyer currency)
+    hdl2 <- Trace.activateContractWallet w2 (buyer slotCfg currency)
+    hdl3 <- Trace.activateContractWallet w3 (buyer slotCfg currency)
     _ <- Trace.waitNSlots 1
     Trace.callEndpoint @"bid" hdl2 50
     _ <- Trace.waitNSlots 15
     Trace.callEndpoint @"bid" hdl3 60
     _ <- Trace.waitNSlots 35
     Trace.callEndpoint @"bid" hdl2 trace2WinningBid
-    void $ Trace.waitUntilTime $ apEndTime params
+    void $ Trace.waitUntilTime $ apEndTime $ params $ TimeSlot.scSlotZeroTime def
     void $ Trace.waitNSlots 2
 
 trace1FinalState :: AuctionOutput
@@ -152,7 +157,7 @@ threadToken =
         $ Freer.runError @Folds.EmulatorFoldErr
         $ Stream.foldEmulatorStreamM fld
         $ Stream.takeUntilSlot 10
-        $ Trace.runEmulatorStream (options ^. emulatorConfig) (options ^. feeConfig)
+        $ Trace.runEmulatorStream (options ^. emulatorConfig)
         $ do
             void $ Trace.activateContractWallet w1 (void con)
             Trace.waitNSlots 3
@@ -183,10 +188,14 @@ instance ContractModel AuctionModel where
     data Action AuctionModel = Init | Bid Wallet Integer | WaitUntil Slot
         deriving (Eq, Show)
 
-    initialState = AuctionModel { _currentBid = 0
-                                , _winner     = w1
-                                , _endSlot    = TimeSlot.posixTimeToEnclosingSlot def $ apEndTime params
-                                , _phase      = NotStarted }
+    initialState = AuctionModel
+        { _currentBid = 0
+        , _winner     = w1
+        , _endSlot    = TimeSlot.posixTimeToEnclosingSlot def $ apEndTime
+                                                              $ params
+                                                              $ TimeSlot.scSlotZeroTime def
+        , _phase      = NotStarted
+        }
 
     arbitraryAction s
         | p /= NotStarted =
@@ -254,8 +263,8 @@ prop_Auction script =
         (\ _ -> pure True)  -- TODO: check termination
         script
     where
-        spec = ContractInstanceSpec SellerH w1 seller :
-               [ ContractInstanceSpec (BuyerH w) w (buyer threadToken) | w <- map Wallet [2..4] ]
+        spec = ContractInstanceSpec SellerH w1 (seller def) :
+               [ ContractInstanceSpec (BuyerH w) w (buyer def threadToken) | w <- map Wallet [2..4] ]
 
 finishAuction :: DL AuctionModel ()
 finishAuction = do
@@ -272,23 +281,26 @@ tests :: TestTree
 tests =
     testGroup "auction"
         [ checkPredicateOptions options "run an auction"
-            (assertDone seller (Trace.walletInstanceTag w1) (const True) "seller should be done"
-            .&&. assertDone (buyer threadToken) (Trace.walletInstanceTag w2) (const True) "buyer should be done"
-            .&&. assertAccumState (buyer threadToken) (Trace.walletInstanceTag w2) ((==) trace1FinalState ) "final state should be OK"
+            (assertDone (seller slotCfg) (Trace.walletInstanceTag w1) (const True) "seller should be done"
+            .&&. assertDone (buyer slotCfg threadToken) (Trace.walletInstanceTag w2) (const True) "buyer should be done"
+            .&&. assertAccumState (buyer slotCfg threadToken) (Trace.walletInstanceTag w2) ((==) trace1FinalState ) "final state should be OK"
             .&&. walletFundsChange w1 (Ada.toValue trace1WinningBid <> inv theToken)
             .&&. walletFundsChange w2 (inv (Ada.toValue trace1WinningBid) <> theToken))
-            auctionTrace1
+            (auctionTrace1 slotCfg)
         , checkPredicateOptions options "run an auction with multiple bids"
-            (assertDone seller (Trace.walletInstanceTag w1) (const True) "seller should be done"
-            .&&. assertDone (buyer threadToken) (Trace.walletInstanceTag w2) (const True) "buyer should be done"
-            .&&. assertDone (buyer threadToken) (Trace.walletInstanceTag w3) (const True) "3rd party should be done"
-            .&&. assertAccumState (buyer threadToken) (Trace.walletInstanceTag w2) ((==) trace2FinalState) "final state should be OK"
+            (assertDone (seller slotCfg) (Trace.walletInstanceTag w1) (const True) "seller should be done"
+            .&&. assertDone (buyer slotCfg threadToken) (Trace.walletInstanceTag w2) (const True) "buyer should be done"
+            .&&. assertDone (buyer slotCfg threadToken) (Trace.walletInstanceTag w3) (const True) "3rd party should be done"
+            .&&. assertAccumState (buyer slotCfg threadToken) (Trace.walletInstanceTag w2) ((==) trace2FinalState) "final state should be OK"
             .&&. walletFundsChange w1 (Ada.toValue trace2WinningBid <> inv theToken)
             .&&. walletFundsChange w2 (inv (Ada.toValue trace2WinningBid) <> theToken)
             .&&. walletFundsChange w3 mempty)
-            auctionTrace2
+            (auctionTrace2 slotCfg)
         -- FIXME: Fails because you cannot bid in certain slots when the off-chain code is busy.
         , testProperty "QuickCheck property" $
             withMaxSuccess 1 $ classify True "FIXME" True
             -- withMaxSuccess 10 prop_FinishAuction
         ]
+
+    where
+        slotCfg = def

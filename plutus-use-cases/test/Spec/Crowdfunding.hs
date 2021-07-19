@@ -4,7 +4,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TypeApplications    #-}
+
 {-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns -fno-warn-unused-do-bind #-}
+
 module Spec.Crowdfunding(tests) where
 
 import qualified Control.Foldl                         as L
@@ -103,8 +105,8 @@ tests = testGroup "crowdfunding"
 
     , goldenPir "test/Spec/crowdfunding.pir" $$(PlutusTx.compile [|| mkValidator ||])
     ,   let
-            deadline = 10
-            collectionDeadline = 15
+            deadline = 10000
+            collectionDeadline = 15000
             owner = w1
             cmp = mkCampaign deadline collectionDeadline owner
         in HUnit.testCaseSteps "script size is reasonable" $ \step -> reasonable' step (contributionScript cmp) 30000
@@ -132,7 +134,7 @@ renderWalletLog trace =
             run
             $ foldEmulatorStreamM (L.generalize $ Folds.instanceLog (Trace.walletInstanceTag w1))
             $ filterLogLevel Info
-            $ Trace.runEmulatorStream def def trace
+            $ Trace.runEmulatorStream def trace
     in BSL.fromStrict $ T.encodeUtf8 $ renderStrict $ layoutPretty defaultLayoutOptions $ vsep $ fmap pretty $ S.fst' result
 
 renderEmulatorLog :: EmulatorTrace () -> ByteString
@@ -141,5 +143,5 @@ renderEmulatorLog trace =
             run
             $ foldEmulatorStreamM (L.generalize Folds.emulatorLog)
             $ filterLogLevel Info
-            $ Trace.runEmulatorStream def def trace
+            $ Trace.runEmulatorStream def trace
     in BSL.fromStrict $ T.encodeUtf8 $ renderStrict $ layoutPretty defaultLayoutOptions $ vsep $ fmap pretty $ S.fst' result

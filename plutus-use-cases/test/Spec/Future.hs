@@ -34,6 +34,9 @@ import           Plutus.Trace.Emulator   (ContractHandle, EmulatorTrace)
 import qualified Plutus.Trace.Emulator   as Trace
 import qualified PlutusTx
 
+startTime :: POSIXTime
+startTime = TimeSlot.scSlotZeroTime def
+
 tests :: TestTree
 tests =
     testGroup "futures"
@@ -65,7 +68,6 @@ tests =
 
     , HUnit.testCaseSteps "script size is reasonable" $ \step ->
         reasonable' step (F.validator theFuture F.testAccounts) 63000
-
     ]
 
 setup :: FutureSetup
@@ -73,7 +75,7 @@ setup =
     FutureSetup
         { shortPK = walletPubKey w1
         , longPK = walletPubKey w2
-        , contractStart = TimeSlot.slotToBeginPOSIXTime def 15
+        , contractStart = startTime + 15000
         }
 
 w1 :: Wallet
@@ -89,7 +91,7 @@ w10 = Wallet 10
 --   due at slot #100.
 theFuture :: Future
 theFuture = Future {
-    ftDeliveryDate  = TimeSlot.slotToBeginPOSIXTime def 100,
+    ftDeliveryDate  = startTime + 100000,
     ftUnits         = units,
     ftUnitPrice     = forwardPrice,
     ftInitialMargin = Ada.lovelaceValueOf 800,
@@ -174,7 +176,7 @@ settleEarly :: ContractHandle () FutureSchema FutureError -> EmulatorTrace ()
 settleEarly hdl = do
     let
         spotPrice = Ada.lovelaceValueOf 11240
-        ov = mkSignedMessage (TimeSlot.slotToBeginPOSIXTime def 25) spotPrice
+        ov = mkSignedMessage (startTime + 25000) spotPrice
     Trace.callEndpoint @"settle-early" hdl ov
     void $ Trace.waitNSlots 1
 
