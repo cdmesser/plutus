@@ -33,6 +33,8 @@ module Plutus.Contract.Request(
     , watchAddressUntilSlot
     , watchAddressUntilTime
     -- ** Tx confirmation
+    , TxStatus(..)
+    , awaitTxStatusChange
     , awaitTxConfirmed
     -- ** Contract instances
     , ownInstanceId
@@ -63,7 +65,6 @@ module Plutus.Contract.Request(
 
 import           Control.Applicative
 import           Control.Lens                (Prism', preview, review, view)
-import           Control.Monad               (void)
 import qualified Control.Monad.Freer.Error   as E
 import           Data.Aeson                  (FromJSON, ToJSON)
 import qualified Data.Aeson                  as JSON
@@ -86,7 +87,8 @@ import qualified Ledger.Value                as V
 import           Plutus.Contract.Util        (loopM)
 import qualified PlutusTx
 
-import           Plutus.Contract.Effects     (ActiveEndpoint (..), PABReq (..), PABResp (..), UtxoAtAddress (..))
+import           Plutus.Contract.Effects     (ActiveEndpoint (..), PABReq (..), PABResp (..), TxStatus (..),
+                                              UtxoAtAddress (..))
 import qualified Plutus.Contract.Effects     as E
 import           Plutus.Contract.Schema      (Input, Output)
 import           Wallet.Types                (AddressChangeRequest (..), AddressChangeResponse (..), ContractInstanceId,
@@ -292,11 +294,22 @@ fundsAtAddressGeq
 fundsAtAddressGeq addr vl =
     fundsAtAddressCondition (\presentVal -> presentVal `V.geq` vl) addr
 
+-- | Wait for the status of a transaction to change
+awaitTxStatusChange :: forall w s e. AsContractError e => TxId -> Contract w s e TxStatus
+awaitTxStatusChange i = pabReq (AwaitTxStatusChangeReq i) (E._AwaitTxStatusChangeResp' i)
+
 -- TODO: Configurable level of confirmation (for example, as soon as the tx is
 --       included in a block, or only when it can't be rolled back anymore)
 -- | Wait until a transaction is confirmed (added to the ledger).
+--   If the transaction is never added to the ledger then 'awaitTxConfirmed' never
+--   returns
 awaitTxConfirmed :: forall w s e. (AsContractError e) => TxId -> Contract w s e ()
-awaitTxConfirmed i = void $ pabReq (AwaitTxConfirmedReq i) E._AwaitTxConfirmedResp
+awaitTxConfirmed i = go where
+  go = do
+    newStatus <- awaitTxStatusChange i
+    case newStatus of
+      Unknown -> go
+      _       -> pure ()
 
 -- | Get the 'ContractInstanceId' of this instance.
 ownInstanceId :: forall w s e. (AsContractError e) => Contract w s e ContractInstanceId

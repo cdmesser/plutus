@@ -191,7 +191,7 @@ stmRequestHandler = fmap sequence (wrapHandler (fmap pure nonBlockingRequests) <
         <> RequestHandler.handleUtxoQueries @effs
         <> RequestHandler.handleUnbalancedTransactions @effs
         <> RequestHandler.handlePendingTransactions @effs
-        <> RequestHandler.handleTxConfirmedQueries @effs
+        <> RequestHandler.handleTxConfirmedQueries @effs -- FIXME: Handle with waiting
         <> RequestHandler.handleOwnInstanceIdQueries @effs
         <> RequestHandler.handleAddressChangedAtQueries @effs
         <> RequestHandler.handleCurrentSlotQueries @effs

@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     PABReq(..),
@@ -10,7 +11,7 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     _AwaitTimeReq,
     _CurrentSlotReq,
     _CurrentTimeReq,
-    _AwaitTxConfirmedReq,
+    _AwaitTxStatusChangeReq,
     _OwnContractInstanceIdReq,
     _OwnPublicKeyReq,
     _UtxoAtReq,
@@ -23,7 +24,8 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     _AwaitTimeResp,
     _CurrentSlotResp,
     _CurrentTimeResp,
-    _AwaitTxConfirmedResp,
+    _AwaitTxStatusChangeResp,
+    _AwaitTxStatusChangeResp',
     _OwnContractInstanceIdResp,
     _OwnPublicKeyResp,
     _UtxoAtResp,
@@ -40,23 +42,25 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     WriteBalancedTxResponse(..),
     writeBalancedTxResponse,
     ActiveEndpoint(..),
-    TxConfirmed(..)
+    TxValidity(..),
+    TxStatus(..)
     ) where
 
-import           Control.Lens                (Iso', iso, makePrisms)
-import           Data.Aeson                  (FromJSON, ToJSON)
-import qualified Data.Aeson                  as JSON
-import qualified Data.Map                    as Map
-import           Data.Text.Prettyprint.Doc   (Pretty (..), colon, indent, viaShow, vsep, (<+>))
-import           GHC.Generics                (Generic)
-import           Ledger                      (Address, PubKey, Tx, TxId, TxOutTx (..), txId)
-import           Ledger.AddressMap           (UtxoMap)
-import           Ledger.Constraints.OffChain (UnbalancedTx)
-import           Ledger.Slot                 (Slot (..))
-import           Ledger.Time                 (POSIXTime (..))
-import           Wallet.API                  (WalletAPIError)
-import           Wallet.Types                (AddressChangeRequest, AddressChangeResponse, ContractInstanceId,
-                                              EndpointDescription, EndpointValue)
+import           Control.Lens                     (Iso', Prism', iso, makePrisms, prism')
+import           Data.Aeson                       (FromJSON, ToJSON)
+import qualified Data.Aeson                       as JSON
+import qualified Data.Map                         as Map
+import           Data.Text.Prettyprint.Doc        (Pretty (..), colon, indent, viaShow, vsep, (<+>))
+import           Data.Text.Prettyprint.Doc.Extras (PrettyShow (..))
+import           GHC.Generics                     (Generic)
+import           Ledger                           (Address, PubKey, Tx, TxId, TxOutTx (..), txId)
+import           Ledger.AddressMap                (UtxoMap)
+import           Ledger.Constraints.OffChain      (UnbalancedTx)
+import           Ledger.Slot                      (Slot (..))
+import           Ledger.Time                      (POSIXTime (..))
+import           Wallet.API                       (WalletAPIError)
+import           Wallet.Types                     (AddressChangeRequest, AddressChangeResponse, ContractInstanceId,
+                                                   EndpointDescription, EndpointValue)
 
 -- | Requests that 'Contract's can make
 data PABReq =
@@ -64,7 +68,7 @@ data PABReq =
     | AwaitTimeReq POSIXTime
     | CurrentSlotReq
     | CurrentTimeReq
-    | AwaitTxConfirmedReq TxId
+    | AwaitTxStatusChangeReq TxId
     | OwnContractInstanceIdReq
     | OwnPublicKeyReq
     | UtxoAtReq Address
@@ -77,18 +81,18 @@ data PABReq =
 
 instance Pretty PABReq where
   pretty = \case
-    AwaitSlotReq s           -> "Await slot:" <+> pretty s
-    AwaitTimeReq s           -> "Await time:" <+> pretty s
-    CurrentSlotReq           -> "Current slot"
-    CurrentTimeReq           -> "Current time"
-    AwaitTxConfirmedReq txid -> "Await tx confirmed:" <+> pretty txid
-    OwnContractInstanceIdReq -> "Own contract instance ID"
-    OwnPublicKeyReq          -> "Own public key"
-    UtxoAtReq addr           -> "Utxo at:" <+> pretty addr
-    AddressChangeReq req     -> "Address change:" <+> pretty req
-    BalanceTxReq utx         -> "Balance tx:" <+> pretty utx
-    WriteBalancedTxReq tx    -> "Write balanced tx:" <+> pretty tx
-    ExposeEndpointReq ep     -> "Expose endpoint:" <+> pretty ep
+    AwaitSlotReq s              -> "Await slot:" <+> pretty s
+    AwaitTimeReq s              -> "Await time:" <+> pretty s
+    CurrentSlotReq              -> "Current slot"
+    CurrentTimeReq              -> "Current time"
+    AwaitTxStatusChangeReq txid -> "Await tx status change:" <+> pretty txid
+    OwnContractInstanceIdReq    -> "Own contract instance ID"
+    OwnPublicKeyReq             -> "Own public key"
+    UtxoAtReq addr              -> "Utxo at:" <+> pretty addr
+    AddressChangeReq req        -> "Address change:" <+> pretty req
+    BalanceTxReq utx            -> "Balance tx:" <+> pretty utx
+    WriteBalancedTxReq tx       -> "Write balanced tx:" <+> pretty tx
+    ExposeEndpointReq ep        -> "Expose endpoint:" <+> pretty ep
 
 -- | Responses that 'Contract's receive
 data PABResp =
@@ -96,7 +100,7 @@ data PABResp =
     | AwaitTimeResp POSIXTime
     | CurrentSlotResp Slot
     | CurrentTimeResp POSIXTime
-    | AwaitTxConfirmedResp TxId
+    | AwaitTxStatusChangeResp TxId TxStatus
     | OwnContractInstanceIdResp ContractInstanceId
     | OwnPublicKeyResp PubKey
     | UtxoAtResp UtxoAtAddress
@@ -110,18 +114,18 @@ data PABResp =
 
 instance Pretty PABResp where
   pretty = \case
-    AwaitSlotResp s             -> "Slot:" <+> pretty s
-    AwaitTimeResp s             -> "Time:" <+> pretty s
-    CurrentSlotResp s           -> "Current slot:" <+> pretty s
-    CurrentTimeResp s           -> "Current time:" <+> pretty s
-    AwaitTxConfirmedResp txid   -> "Tx confirmed:" <+> pretty txid
-    OwnContractInstanceIdResp i -> "Own contract instance ID:" <+> pretty i
-    OwnPublicKeyResp k          -> "Own public key:" <+> pretty k
-    UtxoAtResp rsp              -> "Utxo at:" <+> pretty rsp
-    AddressChangeResp rsp       -> "Address change:" <+> pretty rsp
-    BalanceTxResp r             -> "Balance tx:" <+> pretty r
-    WriteBalancedTxResp r       -> "Write balanced tx:" <+> pretty r
-    ExposeEndpointResp desc rsp -> "Call endpoint" <+> pretty desc <+> "with" <+> pretty rsp
+    AwaitSlotResp s                     -> "Slot:" <+> pretty s
+    AwaitTimeResp s                     -> "Time:" <+> pretty s
+    CurrentSlotResp s                   -> "Current slot:" <+> pretty s
+    CurrentTimeResp s                   -> "Current time:" <+> pretty s
+    AwaitTxStatusChangeResp txid status -> "Status of" <+> pretty txid <+> "changed to" <+> pretty status
+    OwnContractInstanceIdResp i         -> "Own contract instance ID:" <+> pretty i
+    OwnPublicKeyResp k                  -> "Own public key:" <+> pretty k
+    UtxoAtResp rsp                      -> "Utxo at:" <+> pretty rsp
+    AddressChangeResp rsp               -> "Address change:" <+> pretty rsp
+    BalanceTxResp r                     -> "Balance tx:" <+> pretty r
+    WriteBalancedTxResp r               -> "Write balanced tx:" <+> pretty r
+    ExposeEndpointResp desc rsp         -> "Call endpoint" <+> pretty desc <+> "with" <+> pretty rsp
 
 matches :: PABReq -> PABResp -> Bool
 matches a b = case (a, b) of
@@ -129,7 +133,7 @@ matches a b = case (a, b) of
   (AwaitTimeReq{}, AwaitTimeResp{})                       -> True
   (CurrentSlotReq, CurrentSlotResp{})                     -> True
   (CurrentTimeReq, CurrentTimeResp{})                     -> True
-  (AwaitTxConfirmedReq{}, AwaitTxConfirmedResp{})         -> True
+  (AwaitTxStatusChangeReq i, AwaitTxStatusChangeResp i' _)         -> i == i'
   (OwnContractInstanceIdReq, OwnContractInstanceIdResp{}) -> True
   (OwnPublicKeyReq, OwnPublicKeyResp{})                   -> True
   (UtxoAtReq{}, UtxoAtResp{})                             -> True
@@ -156,6 +160,21 @@ instance Pretty UtxoAtAddress where
       utxos = vsep $ fmap prettyTxOutPair (Map.toList utxo)
     in vsep ["Utxo at" <+> pretty address <+> "=", indent 2 utxos]
 
+-- | Validity of a transaction that has been added to the ledger
+data TxValidity = TxValid | TxInvalid
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
+  deriving Pretty via (PrettyShow TxValidity)
+
+-- | The status of a Cardano transaction
+data TxStatus =
+  OnChain TxValidity -- ^ The transaction is on the chain, n blocks deep. It can still be rolled back.
+  | Committed TxValidity -- ^ The transaction is on the chain. It cannot be rolled back anymore.
+  | Unknown -- ^ The transaction is not on the chain. That's all we can say.
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
+  deriving Pretty via (PrettyShow TxStatus)
+
 data BalanceTxResponse =
   BalanceTxFailed WalletAPIError
   | BalanceTxSuccess Tx
@@ -166,6 +185,12 @@ instance Pretty BalanceTxResponse where
   pretty = \case
     BalanceTxFailed e  -> "BalanceTxFailed:" <+> pretty e
     BalanceTxSuccess i -> "BalanceTxSuccess:" <+> pretty (txId i)
+
+_AwaitTxStatusChangeResp' :: TxId -> Prism' PABResp TxStatus
+_AwaitTxStatusChangeResp' i =
+  prism'
+    (AwaitTxStatusChangeResp i)
+    (\case { AwaitTxStatusChangeResp i' s | i == i' -> Just s; _ -> Nothing })
 
 balanceTxResponse :: Iso' BalanceTxResponse (Either WalletAPIError Tx)
 balanceTxResponse = iso f g where
@@ -201,12 +226,6 @@ instance Pretty ActiveEndpoint where
       [ "Endpoint:" <+> pretty aeDescription
       , "Metadata:" <+> viaShow aeMetadata
       ]
-
-newtype TxConfirmed =
-    TxConfirmed { unTxConfirmed :: TxId }
-        deriving stock (Eq, Ord, Generic, Show)
-        deriving anyclass (ToJSON, FromJSON)
-        deriving Pretty via TxId
 
 makePrisms ''PABReq
 
