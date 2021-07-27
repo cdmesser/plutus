@@ -44,8 +44,7 @@ import           Data.Aeson                                       (Value)
 import           Data.Proxy                                       (Proxy (..))
 import qualified Data.Text                                        as Text
 
-import           Plutus.Contract.Effects                          (ActiveEndpoint (..), PABReq (..), PABResp (..),
-                                                                   TxConfirmed (..))
+import           Plutus.Contract.Effects                          (ActiveEndpoint (..), PABReq (..), PABResp (..))
 import qualified Plutus.Contract.Effects                          as Contract.Effects
 import           Plutus.Contract.Resumable                        (Request (..), Response (..))
 import           Plutus.Contract.State                            (ContractResponse (..), State (..))
@@ -154,7 +153,7 @@ processTxConfirmedRequestsSTM ::
     )
     => RequestHandler effs PABReq (STM PABResp)
 processTxConfirmedRequestsSTM =
-    maybeToHandler (extract Contract.Effects._AwaitTxConfirmedReq)
+    maybeToHandler (extract Contract.Effects._AwaitTxStatusChangeReq)
     >>> RequestHandler handler
     where
         handler req = do

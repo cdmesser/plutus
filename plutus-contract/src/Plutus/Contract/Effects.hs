@@ -43,7 +43,10 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     writeBalancedTxResponse,
     ActiveEndpoint(..),
     TxValidity(..),
-    TxStatus(..)
+    TxStatus(..),
+    Depth(..),
+    isConfirmed,
+    increaseDepth
     ) where
 
 import           Control.Lens                     (Iso', Prism', iso, makePrisms, prism')
@@ -166,14 +169,52 @@ data TxValidity = TxValid | TxInvalid
   deriving anyclass (ToJSON, FromJSON)
   deriving Pretty via (PrettyShow TxValidity)
 
+{- Note [TxStatus state machine]
+
+The status of a transaction is described by the following state machine.
+
+Current state | Next state(s)
+-----------------------------------------------------
+Unknown       | OnChain
+OnChain       | OnChain, Unknown, Committed
+Committed     | -
+
+The initial state after submitting the transaction is Unknown.
+
+-}
+
+-- | How many blocks deep the tx is on the chain
+newtype Depth = Depth Int
+    deriving stock (Eq, Ord, Show)
+    deriving newtype (Num, Real, Enum, Integral, Pretty, ToJSON, FromJSON)
+
 -- | The status of a Cardano transaction
 data TxStatus =
-  OnChain TxValidity -- ^ The transaction is on the chain, n blocks deep. It can still be rolled back.
+  TentativelyConfirmed Depth TxValidity -- ^ The transaction is on the chain, n blocks deep. It can still be rolled back.
   | Committed TxValidity -- ^ The transaction is on the chain. It cannot be rolled back anymore.
   | Unknown -- ^ The transaction is not on the chain. That's all we can say.
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
   deriving Pretty via (PrettyShow TxStatus)
+
+-- | Whether a 'TxStatus' counts as confirmed given the minimum depth
+isConfirmed :: Depth -> TxStatus -> Bool
+isConfirmed minDepth = \case
+    TentativelyConfirmed d _ | d >= minDepth -> True
+    Committed{}                              -> True
+    _                                        -> False
+
+-- | Increase the depth of a tentatively confirmed transaction
+increaseDepth :: TxStatus -> TxStatus
+increaseDepth (TentativelyConfirmed d s)
+  | d < succ chainConstant = TentativelyConfirmed (d + 1) s
+  | otherwise              = Committed s
+increaseDepth e                        = e
+
+-- TODO: Configurable!
+-- | The depth (in blocks) after which a transaction cannot be rolled back anymore
+chainConstant :: Depth
+chainConstant = Depth 8
 
 data BalanceTxResponse =
   BalanceTxFailed WalletAPIError

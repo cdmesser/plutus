@@ -265,7 +265,7 @@ processNewTransactions txns = do
     let mpReq Request{rqID, itID, rqRequest=txid} =
             case Map.lookup txid statusMap of
                 Nothing -> Nothing
-                Just newStatus -> Just Response{rspRqID=rqID, rspItID=itID, rspResponse=AwaitTxStatusChangeResp txid (E.OnChain newStatus)}
+                Just newStatus -> Just Response{rspRqID=rqID, rspItID=itID, rspResponse=AwaitTxStatusChangeResp txid (E.Committed newStatus)}
         txStatusHk = listToMaybe $ mapMaybe mpReq hks
     traverse_ (addResponse @w @s @e) txStatusHk
     logResponse @w @s @e txStatusHk
