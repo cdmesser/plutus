@@ -46,7 +46,8 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     TxStatus(..),
     Depth(..),
     isConfirmed,
-    increaseDepth
+    increaseDepth,
+    initialStatus
     ) where
 
 import           Control.Lens                     (Iso', Prism', iso, makePrisms, prism')
@@ -56,7 +57,7 @@ import qualified Data.Map                         as Map
 import           Data.Text.Prettyprint.Doc        (Pretty (..), colon, indent, viaShow, vsep, (<+>))
 import           Data.Text.Prettyprint.Doc.Extras (PrettyShow (..))
 import           GHC.Generics                     (Generic)
-import           Ledger                           (Address, PubKey, Tx, TxId, TxOutTx (..), txId)
+import           Ledger                           (Address, OnChainTx, PubKey, Tx, TxId, TxOutTx (..), eitherTx, txId)
 import           Ledger.AddressMap                (UtxoMap)
 import           Ledger.Constraints.OffChain      (UnbalancedTx)
 import           Ledger.Slot                      (Slot (..))
@@ -185,7 +186,7 @@ The initial state after submitting the transaction is Unknown.
 
 -- | How many blocks deep the tx is on the chain
 newtype Depth = Depth Int
-    deriving stock (Eq, Ord, Show)
+    deriving stock (Eq, Ord, Show, Generic)
     deriving newtype (Num, Real, Enum, Integral, Pretty, ToJSON, FromJSON)
 
 -- | The status of a Cardano transaction
@@ -196,6 +197,11 @@ data TxStatus =
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
   deriving Pretty via (PrettyShow TxStatus)
+
+-- | The 'TxStatus' of a transaction right after it was added to the chain
+initialStatus :: OnChainTx -> TxStatus
+initialStatus =
+  TentativelyConfirmed 0 . eitherTx (const TxInvalid) (const TxValid)
 
 -- | Whether a 'TxStatus' counts as confirmed given the minimum depth
 isConfirmed :: Depth -> TxStatus -> Bool
