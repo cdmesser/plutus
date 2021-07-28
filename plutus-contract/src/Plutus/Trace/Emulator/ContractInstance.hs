@@ -208,7 +208,6 @@ runInstance contract event = do
                 mkAgentSysCall Normal WaitForMessage >>= runInstance contract
             Just (NewSlot block _) -> do
                 processNewTransactions @w @s @e (join block)
-                -- mkAgentSysCall Normal WaitForMessage >>= runInstance contract
                 runInstance contract Nothing
             _ -> do
                 response <- respondToRequest @w @s @e handleBlockchainQueries

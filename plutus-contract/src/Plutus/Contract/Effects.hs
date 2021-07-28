@@ -62,6 +62,7 @@ import           Ledger.AddressMap                (UtxoMap)
 import           Ledger.Constraints.OffChain      (UnbalancedTx)
 import           Ledger.Slot                      (Slot (..))
 import           Ledger.Time                      (POSIXTime (..))
+import           PlutusTx.Lattice                 (MeetSemiLattice (..))
 import           Wallet.API                       (WalletAPIError)
 import           Wallet.Types                     (AddressChangeRequest, AddressChangeResponse, ContractInstanceId,
                                                    EndpointDescription, EndpointValue)
@@ -165,10 +166,15 @@ instance Pretty UtxoAtAddress where
     in vsep ["Utxo at" <+> pretty address <+> "=", indent 2 utxos]
 
 -- | Validity of a transaction that has been added to the ledger
-data TxValidity = TxValid | TxInvalid
-  deriving stock (Eq, Show, Generic)
+data TxValidity = TxValid | TxInvalid | UnknownValidity
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
   deriving Pretty via (PrettyShow TxValidity)
+
+instance MeetSemiLattice TxValidity where
+  TxValid /\ TxValid     = TxValid
+  TxInvalid /\ TxInvalid = TxInvalid
+  _ /\ _                 = UnknownValidity
 
 {- Note [TxStatus state machine]
 
@@ -189,14 +195,25 @@ newtype Depth = Depth Int
     deriving stock (Eq, Ord, Show, Generic)
     deriving newtype (Num, Real, Enum, Integral, Pretty, ToJSON, FromJSON)
 
+instance MeetSemiLattice Depth where
+  Depth a /\ Depth b = Depth (max a b)
+
 -- | The status of a Cardano transaction
 data TxStatus =
-  TentativelyConfirmed Depth TxValidity -- ^ The transaction is on the chain, n blocks deep. It can still be rolled back.
+  Unknown -- ^ The transaction is not on the chain. That's all we can say.
+  | TentativelyConfirmed Depth TxValidity -- ^ The transaction is on the chain, n blocks deep. It can still be rolled back.
   | Committed TxValidity -- ^ The transaction is on the chain. It cannot be rolled back anymore.
-  | Unknown -- ^ The transaction is not on the chain. That's all we can say.
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
   deriving Pretty via (PrettyShow TxStatus)
+
+instance MeetSemiLattice TxStatus where
+  Unknown /\ a                                             = a
+  a /\ Unknown                                             = a
+  TentativelyConfirmed d1 v1 /\ TentativelyConfirmed d2 v2 = TentativelyConfirmed (d1 /\ d2) (v1 /\ v2)
+  TentativelyConfirmed _ v1 /\ Committed v2                = Committed (v1 /\ v2)
+  Committed v1 /\ TentativelyConfirmed _ v2                = Committed (v1 /\ v2)
+  Committed v1 /\ Committed v2                             = Committed (v1 /\ v2)
 
 -- | The 'TxStatus' of a transaction right after it was added to the chain
 initialStatus :: OnChainTx -> TxStatus
